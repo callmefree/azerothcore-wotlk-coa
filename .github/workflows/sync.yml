@@ -1,0 +1,62 @@
+name: sync-upstream
+
+# Pull updates from jealous-sound/azerothcore-wotlk-coa into this fork and push.
+# Uses PAT (not GITHUB_TOKEN) so the push triggers the windows-build workflow.
+
+on:
+  schedule:
+    # Run a bit before the nightly build (UTC).
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork (main)
+        uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.PAT }}
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream & fetch
+        run: |
+          git remote add upstream https://github.com/jealous-sound/azerothcore-wotlk-coa.git \
+            || git remote set-url upstream https://github.com/jealous-sound/azerothcore-wotlk-coa.git
+          git fetch upstream main
+
+      - name: Merge upstream/main
+        id: merge
+        run: |
+          if git merge --no-edit upstream/main; then
+            echo "status=ok" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort
+            echo "status=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push to fork
+        if: steps.merge.outputs.status == 'ok'
+        run: |
+          git push https://x-access-token:${{ secrets.PAT }}@github.com/callmefree/azerothcore-wotlk-coa.git main
+
+      - name: Open issue on conflict
+        if: steps.merge.outputs.status == 'conflict'
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+        run: |
+          gh issue create --repo callmefree/azerothcore-wotlk-coa \
+            --title "Sync conflict with upstream main" \
+            --body "Automated sync from jealous-sound/azerothcore-wotlk-coa hit a merge conflict. Please resolve manually, then re-run this workflow." \
+            --label "sync-conflict" || true
+          exit 1
